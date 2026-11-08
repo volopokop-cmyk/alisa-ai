@@ -2,38 +2,45 @@ name: Run Telegram Bot
 
 on:
   schedule:
-    # Запуск каждые 5 часов 50 минут (чтобы избежать лимита в 6 часов)
     - cron: '50 */5 * * *'
-  workflow_dispatch: # Позволяет запускать вручную
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Максимальный таймаут 6 часов (максимум для GitHub)
-    
+    timeout-minutes: 360
+
+    env:
+      HF_HOME: ~/.cache/huggingface
+      TRANSFORMERS_CACHE: ~/.cache/huggingface/transformers
+      HUGGINGFACE_HUB_CACHE: ~/.cache/huggingface/hub
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
 
-    # Кэшируем модели HuggingFace, чтобы не скачивать их каждый раз (экономит время)
-    - name: Cache HuggingFace models
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/huggingface
-        key: ${{ runner.os }}-hf-models
+      - name: Restore HuggingFace cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-hf-
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-    - name: Run Bot
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        HF_TOKEN: ${{ secrets.HF_TOKEN }} # Если модели требуют токена
-      run: python bot.py
+      - name: Run Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python bot.py
