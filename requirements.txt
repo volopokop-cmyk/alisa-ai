@@ -1,5 +1,5 @@
 python-telegram-bot
-transformers
+transformers==4.57.3
 torch
 soundfile
 qwen-tts
