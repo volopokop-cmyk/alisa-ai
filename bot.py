@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 REF_AUDIO = "my_alice_sample.wav" 
 
-# Твой текст из 14-секундного аудио
 REF_TEXT = """Я помню чудное мгновенье:
 Передо мной явилась ты,
 Как мимолетное виденье,
@@ -23,9 +22,10 @@ REF_TEXT = """Я помню чудное мгновенье:
 Звучал мне долго голос нежный
 И снились милые черты..""" 
 
-# ПРОМТ: Строго без стиха!
+# Строгий промт, чтобы она не сходила с ума
 ALICE_SYSTEM_PROMPT = """Ты — Алиса, живая собеседница из Зазеркалья.
-Ты остроумная и немного загадочная. Отвечай кратко, ёмко, по делу, на русском языке."""
+Ты остроумная и немного загадочная. 
+Отвечай ОЧЕНЬ КРАТКО (одно предложение), ёмко, на русском языке."""
 
 print("Загрузка LLM...")
 llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -41,12 +41,13 @@ print("Создание слепка голоса...")
 voice_prompt = tts_model.create_voice_clone_prompt(ref_audio=REF_AUDIO, ref_text=REF_TEXT)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я Алиса. Напиши мне что-нибудь.")
+    await update.message.reply_text("Привет! Я Алиса. Напиши мне что-нибудь, и я отвечу голосом.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await update.message.chat.send_action(action="typing")
 
+    # Ограничиваем историю только текущим сообщением, чтобы не было галлюцинаций
     messages = [
         {"role": "system", "content": ALICE_SYSTEM_PROMPT},
         {"role": "user", "content": user_text}
@@ -55,16 +56,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inputs = tokenizer(text_input, return_tensors="pt").to(llm.device)
     
     with torch.no_grad():
-        # 20 токенов - это 1-2 коротких предложения. TTS успеет их озвучить.
+        # 30 токенов. Этого хватит на короткий ответ.
         outputs = llm.generate(
             **inputs, 
-            max_new_tokens=20, 
-            temperature=0.7, 
+            max_new_tokens=30, 
+            temperature=0.6, 
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id
         )
     
     reply_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+    
+    # Убираем возможные артефакты генерации
+    reply_text = reply_text.strip()
     
     try:
         wavs, sr = tts_model.generate_voice_clone(
@@ -89,8 +93,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Бот запущен...")
+    
+    # МАГИЯ ЗДЕСЬ:
+    # Бот отвечает ТОЛЬКО если:
+    # 1. Это личный чат (filters.ChatType.PRIVATE)
+    # 2. ИЛИ это ответ на его сообщение (filters.REPLY)
+    # 3. ИЛИ его упомянули через @ (filters.Mention)
+    # И это обязательно текст, а не картинка/стикер.
+    chat_filter = filters.TEXT & ~filters.COMMAND & (
+        filters.ChatType.PRIVATE | filters.REPLY | filters.Mention
+    )
+    
+    app.add_handler(MessageHandler(chat_filter, handle_message))
+    print("Бот запущен (отвечает только в ЛС или по реплаю/упоминанию)...")
     app.run_polling() 
 
 if __name__ == "__main__":
