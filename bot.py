@@ -22,10 +22,10 @@ REF_TEXT = """Я помню чудное мгновенье:
 Звучал мне долго голос нежный
 И снились милые черты..""" 
 
-# Строгий промт, чтобы она не сходила с ума
+# Обновили промт: просим заканчивать мысль
 ALICE_SYSTEM_PROMPT = """Ты — Алиса, живая собеседница из Зазеркалья.
 Ты остроумная и немного загадочная. 
-Отвечай ОЧЕНЬ КРАТКО (одно предложение), ёмко, на русском языке."""
+Отвечай кратко (максимум 2 предложения), но ОБЯЗАТЕЛЬНО заканчивай мысль, не обрывай предложение. Пиши на русском языке."""
 
 print("Загрузка LLM...")
 llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -41,13 +41,39 @@ print("Создание слепка голоса...")
 voice_prompt = tts_model.create_voice_clone_prompt(ref_audio=REF_AUDIO, ref_text=REF_TEXT)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я Алиса. Напиши мне что-нибудь, и я отвечу голосом.")
+    await update.message.reply_text("Привет! Я Алиса. Напиши мне что-нибудь, и я отвечу голосом.\n\nКоманда /say [текст] — чтобы просто проверить мой голос.")
+
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ ПРОВЕРКИ TTS ---
+async def say_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text_to_say = " ".join(context.args)
+    if not text_to_say:
+        await update.message.reply_text("Напиши текст после команды, например:\n/say Привет, это проверка моего голоса!")
+        return
+    
+    await update.message.reply_text(f"Озвучиваю: {text_to_say}")
+    
+    try:
+        wavs, sr = tts_model.generate_voice_clone(
+            text=text_to_say,
+            language="Russian",
+            voice_clone_prompt=voice_prompt,
+        )
+        
+        temp_file = "say_test.wav"
+        sf.write(temp_file, wavs[0], sr)
+        
+        with open(temp_file, "rb") as f:
+            await update.message.reply_voice(voice=f)
+        
+        os.remove(temp_file)
+    except Exception as e:
+        logging.error(f"Ошибка TTS (say): {e}")
+        await update.message.reply_text("Ошибка озвучки! Скорее всего, не хватило памяти на сервере.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await update.message.chat.send_action(action="typing")
 
-    # Ограничиваем историю только текущим сообщением, чтобы не было галлюцинаций
     messages = [
         {"role": "system", "content": ALICE_SYSTEM_PROMPT},
         {"role": "user", "content": user_text}
@@ -56,18 +82,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inputs = tokenizer(text_input, return_tensors="pt").to(llm.device)
     
     with torch.no_grad():
-        # 30 токенов. Этого хватит на короткий ответ.
+        # Увеличили лимит до 80, чтобы мысль не обрывалась
         outputs = llm.generate(
             **inputs, 
-            max_new_tokens=30, 
+            max_new_tokens=80, 
             temperature=0.6, 
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id
         )
     
     reply_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-    
-    # Убираем возможные артефакты генерации
     reply_text = reply_text.strip()
     
     try:
@@ -92,20 +116,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
     
-    # МАГИЯ ЗДЕСЬ:
-    # Бот отвечает ТОЛЬКО если:
-    # 1. Это личный чат (filters.ChatType.PRIVATE)
-    # 2. ИЛИ это ответ на его сообщение (filters.REPLY)
-    # 3. ИЛИ его упомянули через @ (filters.Mention)
-    # И это обязательно текст, а не картинка/стикер.
+    # Добавляем команду /start и /say
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("say", say_command)) 
+    
+    # Фильтр: только ЛС, реплаи или упоминания
     chat_filter = filters.TEXT & ~filters.COMMAND & (
         filters.ChatType.PRIVATE | filters.REPLY | filters.Mention
     )
     
     app.add_handler(MessageHandler(chat_filter, handle_message))
-    print("Бот запущен (отвечает только в ЛС или по реплаю/упоминанию)...")
+    print("Бот запущен...")
     app.run_polling() 
 
 if __name__ == "__main__":
