@@ -12,8 +12,9 @@ jobs:
 
     env:
       HF_HOME: ~/.cache/huggingface
-      TRANSFORMERS_CACHE: ~/.cache/huggingface/transformers
       HUGGINGFACE_HUB_CACHE: ~/.cache/huggingface/hub
+      HF_HUB_DISABLE_SYMLINKS: "1"
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
 
     steps:
       - name: Checkout repository
