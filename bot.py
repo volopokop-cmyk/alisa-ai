@@ -119,7 +119,7 @@ def main():
     
     # Добавляем команду /start и /say
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("say", say_command)) 
+    app.add_handler(CommandHandler("alisa", say_command)) 
     
     # Фильтр: только ЛС, реплаи или упоминания
     chat_filter = filters.TEXT & ~filters.COMMAND & (
